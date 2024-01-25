@@ -14,14 +14,16 @@ public class Solitaire : MonoBehaviour
     public GameObject deckButton;
     public GameObject panel;
     public GameObject scoreTime;
+    public GameObject autoMovePanel;
     private TimerControl timeControl;
+
     // Hearts - Kalp | Diamonds - Karo | Clubs - Maça | Spades - Sinek
     public static string[] suits = new string[] { "C", "D", "H", "S" };
 
     // Ace - As | King - Kral | Queen - Kraliçe | Jack - Vale
     public static string[] values = new string[] { "A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K" };
 
-    private readonly int BOTTOMS_COUNT = 7;
+    private const int BOTTOMS_COUNT = 7;
     public List<GameObject>[] bottoms;
     public List<string>[] tops;
 
@@ -39,8 +41,9 @@ public class Solitaire : MonoBehaviour
     public List<GameObject> hideCardOnDeck = new();
 
     public IDictionary<string, int> suitIndex;
-    private bool locked = false; 
-    
+    private bool locked = false;
+    private bool lockedForAutoMove = false;
+
     void Start()
     {
         timeControl = FindObjectOfType<TimerControl>();
@@ -49,26 +52,16 @@ public class Solitaire : MonoBehaviour
         suitIndex.Add("H", 1);
         suitIndex.Add("C", 2);
         suitIndex.Add("D", 3);
-        bottoms = new[] { bottom0, bottom1, bottom2, bottom3, bottom4, bottom5, bottom6 };
-        tops = new[] { new List<string>(), new List<string>(), new List<string>(), new List<string>() };
         PlayCards();
     }
 
     void Update()
     {
         bool isDone = false;
+        bool showAutoMoveButton = false;
         if (!locked)
         {
-            foreach (var list in tops)
-            {
-                if (list.Count != 13)
-                {
-                    isDone = false;
-                    break;
-                }
-
-                isDone = true;
-            }
+            isDone = this.isDone();
         }
 
         if (isDone && !locked)
@@ -79,6 +72,92 @@ public class Solitaire : MonoBehaviour
             textMesh.text = timeControl.timeText.text;
             locked = true;
         }
+
+        if (!visibleCardOnDeck.Any() && !hideCardOnDeck.Any() && !lockedForAutoMove)
+        {
+            foreach (var colBottoms in bottoms)
+            {
+                if (colBottoms.Any(rowBottom => !rowBottom.GetComponent<Selectable>().faceUp))
+                {
+                    showAutoMoveButton = false;
+                    break;
+                }
+
+                showAutoMoveButton = true;
+            }
+
+            if (showAutoMoveButton)
+            {
+                autoMovePanel.SetActive(true);
+                lockedForAutoMove = true;
+            }
+        }
+    }
+
+    public bool isDone()
+    {
+        foreach (var list in tops)
+        {
+            if (list.Count != 13)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+    public IEnumerator AutoComplete()
+    {
+        bool move = true;
+        while (move)
+        {
+            for (int i = 0; i < BOTTOMS_COUNT; i++)
+            {
+                yield return new WaitForSeconds(0.1f);
+                if (bottoms[i].Any())
+                {
+                    var card = bottoms[i].Last().GetComponent<Selectable>();
+                    int index = suitIndex[card.suit];
+
+                    if (tops[index].Any())
+                    {
+                        Selectable snap = Selectable.GetByName(tops[index].Last());
+                        if (snap.value == card.value - 1)
+                        {
+                            MoveToTop(card,snap.gameObject);
+                        }
+                    }
+                    else
+                    {
+                        var snap = topPos[index];
+                        if (card.value == 1)
+                        {
+                            MoveToTop(card,snap);
+                        }
+                    }
+                }
+
+                move = !isDone();
+            }
+        }
+    }
+
+    void MoveToTop(Selectable card, GameObject snap)
+    {
+        card.top = true;
+
+        if (bottoms[card.row].Any())
+        {
+            bottoms[card.row].Remove(card.gameObject);
+        }
+
+        card.row = -1;
+
+        Vector3 position = new Vector3(snap.transform.position.x,
+            snap.transform.position.y, snap.transform.position.z - 0.03f);
+
+        tops[suitIndex[card.suit]].Add(card.name);
+        card.transform.position = card.SetLastPosition(position);
     }
 
     public void ResetGame()
@@ -97,6 +176,8 @@ public class Solitaire : MonoBehaviour
 
     public void PlayCards()
     {
+        bottoms = new[] { bottom0, bottom1, bottom2, bottom3, bottom4, bottom5, bottom6 };
+        tops = new[] { new List<string>(), new List<string>(), new List<string>(), new List<string>() };
         deck = GenerateDeck();
         Shuffle(deck);
         SolitaireSort();

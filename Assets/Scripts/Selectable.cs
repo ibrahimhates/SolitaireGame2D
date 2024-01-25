@@ -12,11 +12,11 @@ public class Selectable : MonoBehaviour
     private Vector3 offset;
     private Vector3 lastPosition;
     private string valueString;
-    private Selectable[] _selectables;
+    private static Selectable[] _selectables;
     private Solitaire _solitaire;
     public bool faceUp = false;
-    private int value;
-    private string suit;
+    public int value;
+    public string suit;
     public bool deck;
     public bool top;
     public int row;
@@ -24,10 +24,11 @@ public class Selectable : MonoBehaviour
     private const float BOTTOM_START_X = -5f;
     private const float BOTTOM_CARD_WIDTH = 1f;
     private const float TOP_START_X = 1f;
-
     private float perceptionDistance = 1.5f;
 
-    // Start is called before the first frame update
+    private float doubleClickTime = 0.3f; // Çift tıklama için belirlenen süre limiti
+    private float lastClickTime = 0f;
+
     void Start()
     {
         lastPosition = this.transform.position;
@@ -58,6 +59,18 @@ public class Selectable : MonoBehaviour
     {
         isDragging = true;
         offset = transform.position - Camera.main.ScreenToWorldPoint(Input.mousePosition);
+
+        // Cift tiklama kontrolu
+        if (this.faceUp)
+        {
+            float currentTime = Time.time;
+            if (currentTime - lastClickTime < doubleClickTime)
+            {
+                OnDoubleClick();
+            }
+
+            lastClickTime = currentTime;
+        }
     }
 
     void OnMouseUp()
@@ -104,10 +117,13 @@ public class Selectable : MonoBehaviour
                 }
                 else if (this.value == 13)
                 {
-                    var kingCollisionResult = CheckCollisionForKing();
-                    if (kingCollisionResult.selectedObject != null)
-                        isChangePosition =
-                            CheckRightPositionForKing(kingCollisionResult.selectedObject, kingCollisionResult.i);
+                    int snapRow = GetMatchingRowInBottom();
+                    if (snapRow != -1)
+                    {
+                        var kingCollision = CheckCollisionForKing(snapRow);
+                        if (kingCollision != null)
+                            isChangePosition = CheckRightPositionForKing(kingCollision, snapRow);
+                    }
                 }
                 else if (place == MatchingPlace.BOTTOM)
                 {
@@ -126,34 +142,69 @@ public class Selectable : MonoBehaviour
         }
     }
 
-    (GameObject? selectedObject, int i) CheckCollisionForKing()
+
+    // Çift tıklama durumunda yapılacak işlem
+    void OnDoubleClick()
     {
-        if (this.value == 13)
+        bool isMatching = false;
+
+        if (this.value == 1)
         {
-            int i = 0;
-            foreach (GameObject bottomPos in _solitaire.bottomPos)
+            for (int i = 0; i < 4; i++)
             {
-                if (_solitaire.bottoms[i].Any())
-                {
-                    i++;
-                    continue;
-                }
-
-                float distance = Vector2.Distance(this.transform.position, bottomPos.transform.position);
-                if (distance < perceptionDistance)
-                {
-                    Debug.Log("Çarpışma gerçekleşti!");
-                    return (bottomPos, i);
-                }
-
-                i++;
+                var aceCollisionResult = CheckCollisiionForAce(i);
+                if (aceCollisionResult is null) continue;
+                isMatching = CheckRightPositionForAce(aceCollisionResult);
+                if (isMatching)
+                    break;
             }
         }
 
-        return (null, 0);
+        if (this.value == 13)
+        {
+            for (int i = 0; i < 7; i++)
+            {
+                var kingCollision = CheckCollisionForKing(i);
+                if (kingCollision != null)
+                    isMatching = CheckRightPositionForKing(kingCollision, i);
+                
+                if (isMatching)
+                    break;
+            }
+        }
+
+        if (!isMatching)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                isMatching = CheckRightPosition(MatchingPlace.TOP, i);
+                if (isMatching)
+                    break;
+            }
+        }
+
+        if (!isMatching)
+        {
+            for (int i = 0; i < 7; i++)
+            {
+                isMatching = CheckRightPosition(MatchingPlace.BOTTOM, i);
+                if (isMatching)
+                    break;
+            }
+        }
     }
 
-    GameObject? CheckCollisiionForAce(int snapIndex)
+    GameObject CheckCollisionForKing(int row)
+    {
+        if (_solitaire.bottoms[row].Any())
+            return null;
+
+        var bottomPos = _solitaire.bottomPos[row];
+
+        return bottomPos;
+    }
+
+    GameObject CheckCollisiionForAce(int snapIndex)
     {
         var topPos = _solitaire.topPos.FirstOrDefault(x => x.name == this.suit);
         int thisIndex = _solitaire.suitIndex[this.suit];
@@ -228,13 +279,16 @@ public class Selectable : MonoBehaviour
         }
         else
         {
+            if (!_solitaire.tops[snapRow].Any())
+                return false;
+
             snap = GetByName(_solitaire.tops[snapRow].Last());
         }
 
         bool snapIsRed = snap.suit == "D" || snap.suit == "H";
         bool selectedIsRed = this.suit == "D" || this.suit == "H";
 
-        if (snapIsRed != selectedIsRed)
+        if (snapIsRed != selectedIsRed && !snap.top)
         {
             if (snap.value == this.value + 1)
             {
@@ -257,8 +311,13 @@ public class Selectable : MonoBehaviour
                 }
             }
         }
-        else
+        else if (snap.top)
         {
+            if (this.row != -1
+                && _solitaire.bottoms[this.row].Any()
+                && _solitaire.bottoms[this.row].Last().name != this.name)
+                return false;
+
             if (snap.value == this.value - 1)
             {
                 if (snap.suit == this.suit)
@@ -275,7 +334,7 @@ public class Selectable : MonoBehaviour
     void FromTopToBottom(Selectable snap)
     {
         float yOffset = 0.4f;
-        float zOffset = 0.03f;
+        float zOffset = 0.01f;
 
         Vector3 position = new Vector3(snap.transform.position.x,
             snap.transform.position.y - yOffset, snap.transform.position.z - zOffset);
@@ -335,7 +394,7 @@ public class Selectable : MonoBehaviour
             var multibleCard = InBottomTogether();
 
             float yOffset = 0;
-            float zOffset = 0.03f;
+            float zOffset = 0.01f;
             foreach (var name in multibleCard)
             {
                 var card = GetByName(name.name);
@@ -346,7 +405,7 @@ public class Selectable : MonoBehaviour
                 card.row = row;
                 card.transform.position = card.SetLastPosition(position);
                 yOffset += 0.4f;
-                zOffset += zOffset;
+                zOffset += 0.01f;
             }
         }
 
@@ -400,7 +459,7 @@ public class Selectable : MonoBehaviour
         this.row = snap.row;
         _solitaire.bottoms[snap.row].Add(this.gameObject);
         Vector3 position = new Vector3(snap.transform.position.x,
-            snap.transform.position.y - 0.4f, snap.transform.position.z - 0.03f);
+            snap.transform.position.y - 0.4f, snap.transform.position.z - 0.01f);
 
         this.transform.position = SetLastPosition(position);
     }
@@ -454,11 +513,11 @@ public class Selectable : MonoBehaviour
             zOffset += 0.01f;
             _solitaire.bottoms[snap.row].Add(cardObject);
             card.row = snap.row;
-            card.transform.position = SetLastPosition(position);
+            card.transform.position = card.SetLastPosition(position);
         }
     }
 
-    Selectable GetByName(string name)
+    public static Selectable GetByName(string name)
     {
         return _selectables.First(x => x.name == name);
     }
